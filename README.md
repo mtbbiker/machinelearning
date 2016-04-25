@@ -1,2 +1,2 @@
 # machinelearning
-Add the MArkup from RStudio
+Add the Markup from RStudio
