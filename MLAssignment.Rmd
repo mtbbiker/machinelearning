@@ -1,0 +1,224 @@
+---
+title: "Assignment for Machine Learning Class "
+output: github_document
+---
+
+#####Set the Global options
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, error = FALSE, message = FALSE,fig.align = "center")
+```
+
+#####Install the following Packages if not already installed
+
+```
+{r packages , message=FALSE
+#install.packages("C50")
+#install.packages("pROC")
+#install.packages("doParallel")
+}
+```
+
+#####Packages used
+
+```{r libraries, message=FALSE}
+library(caret)
+library(ggplot2)
+library(C50)
+library(rattle)
+library(rpart.plot)
+library(rpart)
+library(rattle)
+library(parallel)
+library(doParallel)
+```
+
+### Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways
+
+###[Analysis](http://groupware.les.inf.puc-rio.br/har)
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: 
+
+1. exactly according to the specification (Class A), 
+
+2. throwing the elbows to the front (Class B), 
+
+3. lifting the dumbbell only halfway (Class C), 
+
+4. lowering the dumbbell only halfway (Class D) 
+
+5. and throwing the hips to the front (Class E).
+
+### Data processing and Exploring:
+
+The data for this assignment come in the form of a comma-separated-value file. It is downloaded from the web site:
+
+- [Training Data](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv).
+- [Testing Data](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv).
+
+Some documentation is also available:
+
+- The data for this project come from this source [More Information](http://groupware.les.inf.puc-rio.br/har)
+
+
+Downloading and preparing the data
+```{r loaddata, cache=TRUE}
+
+#Url link as provided
+trainfileurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+
+downloadedtrainfile <- "pml-training.csv"
+#We only download the file once
+if (!file.exists(downloadedtrainfile)) {
+  download.file(url = trainfileurl, destfile = downloadedtrainfile)
+}
+
+#Url link as provided
+testfileurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+downloadedtestfile <- "pml-testing.csv"
+#We only download the file once
+if (!file.exists(downloadedtestfile)) {
+  download.file(url = testfileurl, destfile = downloadedtestfile)
+}
+
+#Replace the "" values with NA's when loading the data
+#Creating the dataset and do some cleaning, 1. Replace the "" values with NA's when loading the data
+exercisedata <- read.csv(file = "pml-training.csv" , na.strings = c("", "NA") , stringsAsFactors = FALSE)
+exercisetestdata <- read.csv(file = "pml-testing.csv" , na.strings = c("", "NA") , stringsAsFactors = FALSE)
+
+dim(exercisedata)
+
+```
+
+We have 160 variables and we need to clean the features from the the prediction model in order to not overfit our data
+
+A Testing data set is provided ("pml-testing.csv") so we will create a control set from the 'exercisedata' data.
+We remove some of the variables that is obvious not part of the predictor variables.
+
+```{r cleaningdata ,cache=TRUE }
+
+# Preprocessing, get rid of NA, First 7 Columns we ignore and will be removed, also exclude last feature ('classe')
+exercisedata[,7:159] <- sapply(exercisedata[,7:159],as.numeric) 
+exercisetestdata[,7:159] <- sapply(exercisetestdata[,7:159], as.numeric) 
+
+exercisedata <- exercisedata[8:160]
+exercisetestdata <- exercisetestdata[8:160]
+
+#summary(exercisedata)
+
+# remove features that contains NAs in test set as we have 160 features, 
+nas <- is.na(apply(exercisetestdata,2,sum))
+
+exercisedata <- exercisedata[,!nas]
+exercisetestdata<-exercisetestdata[,!nas]
+
+#Make sure 'classe' is a factor type
+exercisedata$classe <- as.factor(exercisedata$classe)
+
+
+```
+
+
+###Building the Model
+We start with a basic model and partition the training dataset to do a cross validation on the model.
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz45yV8Ofz2
+
+```{r datapartion_1 }
+inTrain <- createDataPartition(y=exercisedata$classe, p=0.7, list=FALSE)
+traindata <- exercisedata[inTrain,]
+#Create the cross validation Data set
+crossvaldata <- exercisedata[-inTrain,]
+
+#Description of the Variables
+data.frame(exercisedata = dim(exercisedata), traindata = dim(traindata), 
+           crossvaldata= dim(crossvaldata), row.names = c("rows", "columns"))
+```
+
+####Train the first Model
+```{r train_1}
+set.seed(123)
+#Regression Model
+modelfitstart <- train(classe ~ .,method="rpart",data=traindata)
+modelfitstart
+```
+
+####Cross Validation of the First Model
+```{r cross_1}
+#Cross vallidation Data
+predictmodel1 <- predict(modelfitstart,crossvaldata)
+
+confmatrix <- confusionMatrix(predictmodel1,crossvaldata$classe, 
+                              dnn = c("Actual Classe", "Predicted Classe"))
+confmatrix
+
+fancyRpartPlot(modelfitstart$finalModel)
+```
+
+From the data provided by the cross validation we conclude that the model is not accurate enough and we have to try an alternative. It is noted in the following [link](https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-requiredModelAccuracy.md) that at least a 99% accuracy will be required to predict all 20 Case. For the next model we will use a "Random forest" model. It is also noted in the following [link](https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md) that performance will be an issue and we therefore will use the "Parallel Package" to speed up the calculation and training of the Model.
+
+###Random Forest Model will parallel processing
+```{r model_2}
+set.seed(123)
+#On Linux machine use parallel processing to improve performance
+cluster <- makeCluster(detectCores()-1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+fitControl <- trainControl(method = "cv", number = 10, allowParallel = TRUE)
+
+improvedModelFit <- train(classe ~ ., data = traindata, method = "C5.0",trControl = fitControl)
+
+```
+
+####Cross validation
+```{r cross_val_2}
+
+#Do cross validation with remaining raw data
+modelpredict <- predict(improvedModelFit,crossvaldata)
+
+print(improvedModelFit)
+plot(improvedModelFit)
+#plot(improvedModelFit,plotType = "level")
+plot(varImp(improvedModelFit), top = 10)
+
+resampleHist((improvedModelFit))
+
+#Stop parallel processing
+stopCluster(cluster)
+
+```
+
+####Confusion Matrix for Model 2
+```{r cm_2}
+#Statistics from confusion matrix
+
+confmatrix2 <- confusionMatrix(modelpredict,crossvaldata$classe, dnn = c("Actual Classe", "Predicted Classe"))
+confmatrix2
+```
+
+###Results from Model 2
+
+The Kappa value is 0.9961 and Accuracy is now 0.9969, Therefor it appears that we have a good model.
+
+We apply the Model to the Testing set to predict the 20 cases
+```{r prediction}
+#Apply ML Algorithm to Test DataSet
+data_test <- read.csv(file = "pml-testing.csv" , na.strings = c("", "NA") , stringsAsFactors = FALSE)
+
+predicted_outcome <- predict(improvedModelFit,data_test)
+final_predictions <- data.frame(problem_id = data_test$problem_id, classe = predicted_outcome)
+
+#Final prediction on Test set :
+  
+  final_predictions
+```  
+
+
+
+###References
+
+[Link to paper](http://groupware.les.inf.puc-rio.br/work.jsf?p1=11201) http://groupware.les.inf.puc-rio.br/work.jsf?p1=11201
+
+[Link to Tutorials](https://www.r-project.org/nosvn/conferences/useR-2013/Tutorials/kuhn/user_caret_2up.pdf)https://www.r-project.org/nosvn/conferences/useR-2013/Tutorials/kuhn/user_caret_2up.pdf
